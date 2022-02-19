@@ -150,7 +150,6 @@ detect_par_gd <- function( input, mut_cpn_2_threshold = 1.5, discover_num_muts_t
            perc_cn2 > check_frac_2_cpn_muts_threshold ]
   
   # order by most numerous gd clusters (in most samples) - used later to resolve
-  # 
   input[, num_regions := sum(is_subcl_gd), by = .(tumour_id, cluster_id)]
   
   # overlay the doubled clusteres for each region
@@ -177,12 +176,17 @@ detect_par_gd <- function( input, mut_cpn_2_threshold = 1.5, discover_num_muts_t
   mut_gds_events <- rbindlist( lapply(mut_gds_both, function(x) x[[2]]) )
   mut_gds_events <- mut_gds_events[ order(GD_event_id) ]
   
-  #clean up the NAs
+  # Clean up the NAs
   mut_gds_events[ is.na(clusters), clusters := NA ]
   
-  #sumarise per tumour
+  # Summarise per tumour
   mut_gds_seperated[, First_GD := tstrsplit(gd_events, split = ',')[[1]]]
-  mut_gds_seperated[, Second_GD := tstrsplit(gd_events, split = ',')[[2]]]
+  if( mut_gds_seperated[, any( grepl(',', gd_events) )]){
+    mut_gds_seperated[, Second_GD := tstrsplit(gd_events, split = ',')[[2]]]
+  } else {
+    mut_gds_seperated[, Second_GD := as.character(NA) ]
+  }
+    
   mut_gds_seperated[ is.na(First_GD), First_GD := 'No GD' ]
   mut_gds_seperated[ is.na(Second_GD), Second_GD := 'No GD' ]
   
