@@ -1,0 +1,21 @@
+Package: ParrallelGDDetect
+Title: A package to detect distinct genome doubling events have occured in different samples from the same tumour  
+Version: 0.0.0.9000
+Authors@R: 
+    person(given = "Alexander",
+           family = "Frankell",
+           role = c("aut", "cre"),
+           email = "alexander.frankell@crick.ac.uk",
+           comment = c(ORCID = "0000-0002-0341-7878"))
+Description: A package designed to leverage subclonal mutation copy numbers from different samples of the same tumour to detect genome doubling events which have arise independantly in the tumour phylogeny. 
+License: `use_mit_license()`, `use_gpl3_license()` or friends to pick a
+    license
+Encoding: UTF-8
+LazyData: true
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.1.1
+Imports:
+	data.table,
+	dplyr
+Depends: 
+    R (>= 2.10)
