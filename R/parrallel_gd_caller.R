@@ -194,8 +194,6 @@ detect_par_gd <- function( input, mut_cpn_2_threshold = 1.5, discover_num_muts_t
                                           Second_GD = ifelse( any(!Second_GD == 'No GD'), ifelse(length(unique(Second_GD)) > 1, 'Subclonal', 'Clonal'), 'No GD'),
                                           num_first_gd = length(unique(First_GD[ !First_GD == 'No GD' ])), 
                                           num_second_gd = length(unique(Second_GD[ !Second_GD == 'No GD' ])), 
-                                          num_clonal_gd = length(unique(Second_GD[ !Second_GD == 'No GD' ])), 
-                                          num_subclonal_gd = length(unique(Second_GD[ !Second_GD == 'No GD' ])), 
                                           First_GD_homogen = all(First_GD == unique(First_GD)[1]),
                                           Second_GD_homogen = all(Second_GD == unique(Second_GD)[1]),
                                           GD_status_homogen = all(num_gds == unique(num_gds)[1]),
