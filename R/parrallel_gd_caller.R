@@ -42,7 +42,7 @@
 #'       only on mutations which are clonal in a given region (even if they are subclona accross the tumour as a whole)
 #'       either method will be appropriate.
 #'     * MajCN: The copy number of the major allele at the mutated locus.
-#'     * num_gd: The number of genome doublings that have occured in each sample as estimated from the ploidy
+#'     * num_gds: The number of genome doublings that have occured in each sample as estimated from the ploidy
 #'       We recommend using using thresholds of >= 50% of the genome with at least Major allele copy number
 #'       >= 2 for determination of whether a First GD (from ploidy 2 to 4) has occured and a thshold of >= 50% 
 #'       of the genome with at least Major allele copy number >= 3 for determination of whether a seocnd GD 
@@ -124,7 +124,7 @@ detect_par_gd <- function( input, mut_cpn_2_threshold = 1.5, discover_num_muts_t
   # make sure its a data.table for processing
   input <- data.table::as.data.table( input )
   
-  if( input[, all(num_gd == 0)] ){
+  if( input[, all(num_gds == 0)] ){
     message( 'No GD samples inputted')
     return(NULL)
   }
@@ -138,7 +138,7 @@ detect_par_gd <- function( input, mut_cpn_2_threshold = 1.5, discover_num_muts_t
                perc_cn2 = sum(mut_cpn > mut_cpn_2_threshold & MajCN == 2^num_gds) / sum(MajCN == 2^num_gds)),
         by = .(tumour_id, cluster_id, sample_id) ]
   input[, is_subcl_gd := num_muts > discover_num_muts_threshold & 
-          num_cn2 > discover_num_2_cpn_muts_threshold  ]
+          perc_cn2 > discover_frac_2_cpn_muts_threshold  ]
   
   # set lower threshold ('check_' preflex parameters) if cluster is already doubled in a different region
   input[, is_subcl_gd_any_region := any(is_subcl_gd), by = .(tumour_id, cluster_id)]
