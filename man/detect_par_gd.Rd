@@ -8,9 +8,7 @@ detect_par_gd(
   input,
   mut_cpn_2_threshold = 1.5,
   discover_num_muts_threshold = 20,
-  discover_num_2_cpn_muts_threshold = 10,
   discover_frac_2_cpn_muts_threshold = 0.25,
-  check_num_2_cpn_muts_threshold = 5,
   check_frac_2_cpn_muts_threshold = 0.1,
   testing = FALSE,
   track = FALSE
@@ -34,6 +32,7 @@ joint inferences of CCF and multiplicity are made during mutation clustering or 
 using the equation on page 14 of supplementary appendix 1 of Jamal-Hanjani et al 2017 NEJM. AS this methods replies
 only on mutations which are clonal in a given region (even if they are subclona accross the tumour as a whole)
 either method will be appropriate.
+* MajCN: The copy number of the major allele at the mutated locus.
 * num_gd: The number of genome doublings that have occured in each sample as estimated from the ploidy
 We recommend using using thresholds of >= 50\% of the genome with at least Major allele copy number
 >= 2 for determination of whether a First GD (from ploidy 2 to 4) has occured and a thshold of >= 50\%
@@ -47,17 +46,9 @@ rather than gains the are known to occur after a GD event and are similar to tho
 \item{discover_num_muts_threshold}{The number of mutations required to assess a clone for evidence of a subclonal GD events using
 the mutation copy number (mut_cpn). Default is 20.}
 
-\item{discover_num_2_cpn_muts_threshold}{The number of 2 mutation copy number mutations required to consider that some mutations in a
-cluster have most likely occurred before a subclonal genome doubling event in a region. A lower threshold is later applied for other regions
-where a cluster has been called doubled in at least 1 region. Default is 10.}
-
 \item{discover_frac_2_cpn_muts_threshold}{The fraction of 2 mutation copy number mutations required to consider that some mutations in a
 cluster have most likely occurred before a subclonal genome doubling event in a region. A lower threshold is later applied for other regions
 where a cluster has been called doubled in at least 1 region.  Default is 0.25}
-
-\item{check_num_2_cpn_muts_threshold}{A lower threshold for the number of 2 mutation copy number mutations required to consider that some mutations in a
-cluster have most likely occurred before a subclonal genome doubling event in a region if the cluster has already been identified as doubled in other regions.
-Default is 5.}
 
 \item{check_frac_2_cpn_muts_threshold}{A lower threshold for the fraction of 2 mutation copy number mutations required to consider that some mutations in a
 cluster have most likely occurred before a subclonal genome doubling event in a region if the cluster has already been identified as doubled in other regions.

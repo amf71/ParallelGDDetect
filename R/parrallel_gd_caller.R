@@ -41,6 +41,7 @@
 #'       using the equation on page 14 of supplementary appendix 1 of Jamal-Hanjani et al 2017 NEJM. AS this methods replies
 #'       only on mutations which are clonal in a given region (even if they are subclona accross the tumour as a whole)
 #'       either method will be appropriate.
+#'     * MajCN: The copy number of the major allele at the mutated locus.
 #'     * num_gd: The number of genome doublings that have occured in each sample as estimated from the ploidy
 #'       We recommend using using thresholds of >= 50% of the genome with at least Major allele copy number
 #'       >= 2 for determination of whether a First GD (from ploidy 2 to 4) has occured and a thshold of >= 50% 
@@ -54,17 +55,9 @@
 #' @param discover_num_muts_threshold The number of mutations required to assess a clone for evidence of a subclonal GD events using 
 #' the mutation copy number (mut_cpn). Default is 20. 
 #' 
-#' @param discover_num_2_cpn_muts_threshold The number of 2 mutation copy number mutations required to consider that some mutations in a 
-#' cluster have most likely occurred before a subclonal genome doubling event in a region. A lower threshold is later applied for other regions
-#' where a cluster has been called doubled in at least 1 region. Default is 10. 
-#' 
 #' @param discover_frac_2_cpn_muts_threshold The fraction of 2 mutation copy number mutations required to consider that some mutations in a 
 #' cluster have most likely occurred before a subclonal genome doubling event in a region. A lower threshold is later applied for other regions
 #' where a cluster has been called doubled in at least 1 region.  Default is 0.25 
-#'  
-#' @param check_num_2_cpn_muts_threshold A lower threshold for the number of 2 mutation copy number mutations required to consider that some mutations in a 
-#' cluster have most likely occurred before a subclonal genome doubling event in a region if the cluster has already been identified as doubled in other regions.
-#' Default is 5. 
 #' 
 #' @param check_frac_2_cpn_muts_threshold A lower threshold for the fraction of 2 mutation copy number mutations required to consider that some mutations in a 
 #' cluster have most likely occurred before a subclonal genome doubling event in a region if the cluster has already been identified as doubled in other regions.
@@ -122,8 +115,7 @@
 #' 
 #' @export
 detect_par_gd <- function( input, mut_cpn_2_threshold = 1.5, discover_num_muts_threshold = 20,
-                           discover_num_2_cpn_muts_threshold = 10, discover_frac_2_cpn_muts_threshold = 0.25,
-                           check_num_2_cpn_muts_threshold = 5, check_frac_2_cpn_muts_threshold = 0.1, 
+                           discover_frac_2_cpn_muts_threshold = 0.25, check_frac_2_cpn_muts_threshold = 0.1, 
                            testing = FALSE, track = FALSE){
   
   # get the oriingal class (in case not a data table - revert back at the end) 
@@ -132,22 +124,25 @@ detect_par_gd <- function( input, mut_cpn_2_threshold = 1.5, discover_num_muts_t
   # make sure its a data.table for processing
   input <- data.table::as.data.table( input )
   
+  if( input[, all(num_gd == 0)] ){
+    message( 'No GD samples inputted')
+    return(NULL)
+  }
+  
+  
   if(track) message( 'Detecting evidence of Subclonal GDs from mutations' )
   
   ## for each clone in each region estimate whether at least some of the mutations
   ## were might have been present before a GD event (at mutCPN 2)
   input[, `:=`(num_muts = .N,
-               perc_cn2 = sum(mut_cpn > mut_cpn_2_threshold)/.N,
-               num_cn2 = sum(mut_cpn > mut_cpn_2_threshold)), 
+               perc_cn2 = sum(mut_cpn > mut_cpn_2_threshold & MajCN == 2^num_gds) / sum(MajCN == 2^num_gds)),
         by = .(tumour_id, cluster_id, sample_id) ]
   input[, is_subcl_gd := num_muts > discover_num_muts_threshold & 
-          num_cn2 > discover_num_2_cpn_muts_threshold & 
-          perc_cn2 > discover_frac_2_cpn_muts_threshold ]
+          num_cn2 > discover_num_2_cpn_muts_threshold  ]
   
   # set lower threshold ('check_' preflex parameters) if cluster is already doubled in a different region
   input[, is_subcl_gd_any_region := any(is_subcl_gd), by = .(tumour_id, cluster_id)]
-  input[ (is_subcl_gd_any_region), is_subcl_gd := num_cn2 > check_num_2_cpn_muts_threshold & 
-           perc_cn2 > check_frac_2_cpn_muts_threshold ]
+  input[ (is_subcl_gd_any_region), is_subcl_gd := perc_cn2 > check_frac_2_cpn_muts_threshold ]
   
   # order by most numerous gd clusters (in most samples) - used later to resolve
   input[, num_regions := sum(is_subcl_gd), by = .(tumour_id, cluster_id)]
