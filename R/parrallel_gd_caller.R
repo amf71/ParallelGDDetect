@@ -1,6 +1,6 @@
 #====================================================#
 #     Function to produce test for Parrallel GDs     #
-#   accross different samples from the same tumour   #
+#    across different samples from the same tumour   #
 #====================================================#
 
 
@@ -114,7 +114,7 @@
 #' output <- detect_par_gd( example_data )
 #' 
 #' @export
-detect_par_gd <- function( input, mut_cpn_2_threshold = 1.5, discover_num_muts_threshold = 20,
+detect_par_gd <- function( input, mut_cpn_2_threshold = 1.5, discover_num_muts_threshold = 10,
                            discover_frac_2_cpn_muts_threshold = 0.25, check_frac_2_cpn_muts_threshold = 0.1, 
                            testing = FALSE, track = FALSE){
   
@@ -130,11 +130,12 @@ detect_par_gd <- function( input, mut_cpn_2_threshold = 1.5, discover_num_muts_t
   }
   
   
+  
   if(track) message( 'Detecting evidence of Subclonal GDs from mutations' )
   
   ## for each clone in each region estimate whether at least some of the mutations
   ## were might have been present before a GD event (at mutCPN 2)
-  input[, `:=`(num_muts = .N,
+  input[, `:=`(num_muts = sum(MajCN == 2^num_gds),
                perc_cn2 = sum(mut_cpn > mut_cpn_2_threshold & MajCN == 2^num_gds) / sum(MajCN == 2^num_gds)),
         by = .(tumour_id, cluster_id, sample_id) ]
   input[, is_subcl_gd := num_muts > discover_num_muts_threshold & 
@@ -434,7 +435,9 @@ seperate_gd_events <- function( tumour_gd_clusters ){
 #############
 
 
-
+mut_cpn_2_threshold = 1.5; discover_num_muts_threshold = 20;
+discover_frac_2_cpn_muts_threshold = 0.25; check_frac_2_cpn_muts_threshold = 0.1; 
+testing = FALSE; track = FALSE
 
 
 
