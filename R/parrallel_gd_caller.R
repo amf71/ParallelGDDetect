@@ -136,18 +136,22 @@ detect_par_gd <- function( input, mut_cpn_2_threshold = 1.5, discover_num_muts_t
   
   ## for each clone in each region estimate whether at least some of the mutations
   ## were might have been present before a GD event (at mutCPN 2)
-  input[, `:=`(num_muts = sum(MajCN == 2^num_gds),
-               perc_cn2 = sum(mut_cpn > mut_cpn_2_threshold & MajCN == 2^num_gds) / sum(MajCN == 2^num_gds),
-               num_cn2 = sum(mut_cpn > mut_cpn_2_threshold & MajCN == 2^num_gds)),
+  input[, `:=`(num_muts = sum(round(MajCN) == 2^num_gds),
+               perc_cn2 = sum(mut_cpn > mut_cpn_2_threshold & round(MajCN) == 2^num_gds) / sum(round(MajCN) == 2^num_gds),
+               num_cn2 = sum(mut_cpn > mut_cpn_2_threshold & round(MajCN) == 2^num_gds),
+               perc_cn2_all = sum(mut_cpn > mut_cpn_2_threshold) / .N,
+               num_cn2_all = sum(mut_cpn > mut_cpn_2_threshold) ),
         by = .(tumour_id, cluster_id, sample_id) ]
   input[, is_subcl_gd := num_muts > discover_num_muts_threshold & 
           perc_cn2 > discover_frac_2_cpn_muts_threshold &
           num_cn2 > discover_num_2_cpn_muts_threshold ]
   
   # set lower threshold ('check_' preflex parameters) if cluster is already doubled in a different region
+  # Also remove need for X number of mutations at least at MajCN^num_gds - this aviods calling subclonal GD
+  # where in fact different clones have different numbers of mutations at MajCN == numgd^2 (some not enough power for detection)
   input[, is_subcl_gd_any_region := any(is_subcl_gd), by = .(tumour_id, cluster_id)]
-  input[ (is_subcl_gd_any_region), is_subcl_gd := perc_cn2 > check_frac_2_cpn_muts_threshold &
-                                                             num_cn2 > check_num_2_cpn_muts_threshold]
+  input[ (is_subcl_gd_any_region), is_subcl_gd := perc_cn2_all > check_frac_2_cpn_muts_threshold &
+                                                  num_cn2_all > check_num_2_cpn_muts_threshold]
   
   # order by most numerous gd clusters (in most samples) - used later to resolve
   input[, num_regions := sum(is_subcl_gd), by = .(tumour_id, cluster_id)]
@@ -443,7 +447,6 @@ mut_cpn_2_threshold = 1.5; discover_num_muts_threshold = 10;
 discover_frac_2_cpn_muts_threshold = 0.25; check_frac_2_cpn_muts_threshold = 0.1;
 discover_num_2_cpn_muts_threshold = 5; check_num_2_cpn_muts_threshold = 3; 
 testing = FALSE; track = FALSE
-
 
 
 
