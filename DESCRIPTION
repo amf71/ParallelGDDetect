@@ -1,4 +1,4 @@
-Package: ParrallelGDDetect
+Package: ParallelGDDetect
 Title: A package to detect distinct genome doubling events have occured in different samples from the same tumour  
 Version: 0.0.0.9000
 Authors@R: 
