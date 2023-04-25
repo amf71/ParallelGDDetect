@@ -16,7 +16,7 @@ You can use devtools::install_github() to install cloneMap from this repository:
 Temporary authenication token for reviewers included
 
 ```R
-devtools::install_github('amf71/ParallelGDDetect')`
+devtools::install_github('amf71/ParallelGDDetect')
 ```
 
 load package:
