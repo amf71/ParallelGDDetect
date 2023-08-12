@@ -8,7 +8,7 @@ will occur when the subclonal mutation arises before a given subclonal GD event.
 copy numbers alongside the allele specific copy number across the genome to verify these calls as well as carefully
 checking the ploidy solutions determined for each sample. Default thresholds have been set for best performance
 on TRACER NSCLC exome sequencing data. Particularly for whole genome sequencing data, thresholds
-numbers may need modification.
+may need modification.
 
 ## Installation & loading
 
