@@ -182,7 +182,19 @@ detect_par_gd <- function( input, mut_cpn_2_threshold = 1.5, discover_num_muts_t
   
   # Clean up the NAs
   mut_gds_events[ is.na(clusters), clusters := NA ]
+
+  # add mutation count:
+  relevant_columns = c('tumour_id', 'sample_id','cluster_id', 'num_muts', 'num_cn2')
+  mut_counts =  unique(input[, ..relevant_columns])
+  mut_counts[, cluster_id := as.character(cluster_id) ]
   
+  if (all(is.na(mut_gds_events$clusters))) {
+    clusters_supporting_wgd = c()
+    } else {
+  clusters_supporting_wgd = mut_gds_events[ is_subclonal_mutation_supported == TRUE, unlist(strsplit(clusters, split = ',')) ]
+    }
+  mut_counts = mut_counts[ cluster_id %in% clusters_supporting_wgd ]
+
   # Summarise per tumour
   mut_gds_seperated[, First_GD := tstrsplit(gd_events, split = ',')[[1]]]
   if( mut_gds_seperated[, any( grepl(',', gd_events) )]){
@@ -218,7 +230,8 @@ detect_par_gd <- function( input, mut_cpn_2_threshold = 1.5, discover_num_muts_t
   # output as list
   output <- list(GDs_per_tumour = mut_gds_tumour, 
                  GDs_per_region = mut_gds_seperated, 
-                 GDs_events = mut_gds_events)
+                 GDs_events = mut_gds_events,
+                 mut_counts = mut_counts )
   
   return( output )
   
