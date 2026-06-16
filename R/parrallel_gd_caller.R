@@ -8,7 +8,7 @@
 # input = example_data
 # input = eg_input_all
 # 
-# mut_cpn_2_threshold = 1.5; discover_num_muts_threshold = 20;
+# discover_mut_cpn_2_threshold = 1.5; check_mut_cpn_2_threshold = 1.25; discover_num_muts_threshold = 20;
 # discover_num_2_cpn_muts_threshold = 10; discover_frac_2_cpn_muts_threshold = 0.25;
 # check_num_muts_threshold = 10; check_num_2_cpn_muts_threshold = 5; 
 # check_frac_2_cpn_muts_threshold = 0.1
@@ -50,8 +50,13 @@
 #'       rather than gains the are known to occur after a GD event and are similar to those used in carter et al
 #'       2012 Nature biotechnology which first published the ABSOLUTE tool. 
 #' 
-#' @param mut_cpn_2_threshold The mutation copy number (mut_cpn) theshold to consider a mutation most likely at 2 copies. Deafult is 1.5. 
-#' 
+#' @param discover_mut_cpn_2_threshold The mutation copy number (mut_cpn) threshold to consider a mutation most likely at 2 copies,
+#' used when initially discovering whether a cluster shows evidence of a subclonal GD ('discover_' criteria). Default is 1.5.
+#'
+#' @param check_mut_cpn_2_threshold A lower mutation copy number (mut_cpn) threshold to consider a mutation most likely at 2 copies,
+#' used for the 'check_' criteria applied to a cluster in regions where it has already been identified as doubled in at least one
+#' other region. Default is 1.25.
+#'
 #' @param discover_num_muts_threshold The number of mutations required to assess a clone for evidence of a subclonal GD events using 
 #' the mutation copy number (mut_cpn). Default is 20. 
 #' 
@@ -104,7 +109,22 @@
 #'     * is_subclonal_mutation_supported: Whether there is a doubled subclonal mutation cluster supporting a subclonal
 #'       GD (TRUE) or if this subclonal GD is inferred only from the ploidy (FALSE)
 #'     * clusters: If there are supporting subclonal mutation clusters which are they (common seperated list, otherwise NA if none)
-#' 
+#'
+#' * mut_counts: The mutation counts and hypergeometric test statistics, per tumour/sample/cluster, for the clusters which
+#'   support a called subclonal GD event (one row per tumour/sample/cluster which is in the `clusters` field of an event
+#'   in GDs_events with `is_subclonal_mutation_supported == TRUE`)
+#'
+#' * mut_counts_not_called: The same mutation counts and hypergeometric test statistics as mut_counts, but for every
+#'   tumour/sample/cluster combination where the mutation-based test did NOT call a subclonal GD (`is_subcl_gd == FALSE`).
+#'   This is intended for diagnosing why a subclonal GD was not called in a given sample/cluster (e.g. too few mutations,
+#'   perc_cn2/num_cn2 below threshold, high gd_p_value etc.) and includes the thresholds used for the run:
+#'     * is_subcl_gd: Whether this tumour/sample/cluster was called as showing evidence of a subclonal GD
+#'     * is_subcl_gd_any_region: Whether this cluster was called as showing evidence of a subclonal GD in any region/sample
+#'       of the tumour (in which case the lower 'check_' thresholds were applied instead of the 'discover_' thresholds)
+#'     * discover_mut_cpn_2_threshold, check_mut_cpn_2_threshold, discover_num_muts_threshold, discover_frac_2_cpn_muts_threshold,
+#'       discover_num_2_cpn_muts_threshold, check_frac_2_cpn_muts_threshold, check_num_2_cpn_muts_threshold: The threshold values
+#'       used for this run (see arguments above)
+#'
 #' @author 
 #' 
 #' Alexander M Frankell, Francis Crick institute, University College London, \email{alexander.frankell@@crick.ac.uk}
@@ -114,9 +134,10 @@
 #' output <- detect_par_gd( example_data )
 #' 
 #' @export
-detect_par_gd <- function( input, mut_cpn_2_threshold = 1.5, discover_num_muts_threshold = 10,
+detect_par_gd <- function( input, discover_mut_cpn_2_threshold = 1.5, check_mut_cpn_2_threshold = 1.25,
+                           discover_num_muts_threshold = 10,
                            discover_frac_2_cpn_muts_threshold = 0.25, check_frac_2_cpn_muts_threshold = 0.1,
-                           discover_num_2_cpn_muts_threshold = 5, check_num_2_cpn_muts_threshold = 3, 
+                           discover_num_2_cpn_muts_threshold = 5, check_num_2_cpn_muts_threshold = 3,
                            testing = FALSE, track = FALSE){
   
   # get the oriingal class (in case not a data table - revert back at the end) 
@@ -137,21 +158,38 @@ detect_par_gd <- function( input, mut_cpn_2_threshold = 1.5, discover_num_muts_t
   ## for each clone in each region estimate whether at least some of the mutations
   ## were might have been present before a GD event (at mutCPN 2)
   input[, `:=`(num_muts = sum(round(MajCN) == 2^num_gds),
-               perc_cn2 = sum(mut_cpn > mut_cpn_2_threshold & round(MajCN) == 2^num_gds) / sum(round(MajCN) == 2^num_gds),
-               num_cn2 = sum(mut_cpn > mut_cpn_2_threshold & round(MajCN) == 2^num_gds),
-               perc_cn2_all = sum(mut_cpn > mut_cpn_2_threshold) / .N,
-               num_cn2_all = sum(mut_cpn > mut_cpn_2_threshold) ),
+               perc_cn2 = sum(mut_cpn > discover_mut_cpn_2_threshold & round(MajCN) == 2^num_gds) / sum(round(MajCN) == 2^num_gds),
+               num_cn2 = sum(mut_cpn > discover_mut_cpn_2_threshold & round(MajCN) == 2^num_gds),
+               num_cn2_all = sum(mut_cpn > discover_mut_cpn_2_threshold),
+               perc_cn2_all_check = sum(mut_cpn > check_mut_cpn_2_threshold) / .N,
+               num_cn2_all_check = sum(mut_cpn > check_mut_cpn_2_threshold),
+               num_muts_present = sum(mut_cpn > 0 & round(MajCN) == 2^num_gds),
+               num_total_present = sum(mut_cpn > 0) ),
         by = .(tumour_id, cluster_id, sample_id) ]
-  input[, is_subcl_gd := num_muts > discover_num_muts_threshold & 
+  input[, is_subcl_gd := num_muts > discover_num_muts_threshold &
           perc_cn2 > discover_frac_2_cpn_muts_threshold &
           num_cn2 > discover_num_2_cpn_muts_threshold ]
+
+  # hypergeometric test: are high-multiplicity mutations enriched at eligible segments
+  # (MajCN == 2^num_gds) beyond what random placement would produce?
+  # N = num_total_present (pool: all mutations with mut_cpn > 0 in this cluster x sample)
+  # K = num_cn2_all       (red balls: mutations with mut_cpn > threshold, anywhere)
+  # n = num_muts_present  (draw size: eligible mutations with mut_cpn > 0)
+  # k = num_cn2           (observed: eligible mutations with mut_cpn > threshold)
+  # phyper(k-1, K, N-K, n, lower.tail=FALSE) = P(X >= k) under H0
+  # when num_cn2 == 0, phyper(-1, ...) correctly returns 1
+  input[, gd_p_value := ifelse(
+    num_total_present == 0L,
+    NA_real_,
+    phyper(num_cn2 - 1L, num_cn2_all, num_total_present - num_cn2_all,
+           num_muts_present, lower.tail = FALSE) )]
   
   # set lower threshold ('check_' preflex parameters) if cluster is already doubled in a different region
   # Also remove need for X number of mutations at least at MajCN^num_gds - this aviods calling subclonal GD
   # where in fact different clones have different numbers of mutations at MajCN == numgd^2 (some not enough power for detection)
   input[, is_subcl_gd_any_region := any(is_subcl_gd), by = .(tumour_id, cluster_id)]
-  input[ (is_subcl_gd_any_region), is_subcl_gd := perc_cn2_all > check_frac_2_cpn_muts_threshold &
-                                                  num_cn2_all > check_num_2_cpn_muts_threshold]
+  input[ (is_subcl_gd_any_region), is_subcl_gd := perc_cn2_all_check > check_frac_2_cpn_muts_threshold &
+                                                  num_cn2_all_check > check_num_2_cpn_muts_threshold]
   
   # order by most numerous gd clusters (in most samples) - used later to resolve
   input[, num_regions := sum(is_subcl_gd), by = .(tumour_id, cluster_id)]
@@ -184,16 +222,34 @@ detect_par_gd <- function( input, mut_cpn_2_threshold = 1.5, discover_num_muts_t
   mut_gds_events[ is.na(clusters), clusters := NA ]
 
   # add mutation count:
-  relevant_columns = c('tumour_id', 'sample_id','cluster_id', 'num_muts', 'num_cn2')
-  mut_counts =  unique(input[, ..relevant_columns])
-  mut_counts[, cluster_id := as.character(cluster_id) ]
-  
+  # include all hypergeometric test inputs in mut_counts output:
+  # k = num_cn2, K = num_cn2_all, N = num_total_present, n = num_muts_present
+  relevant_columns = c('tumour_id', 'sample_id', 'cluster_id', 'num_muts', 'num_cn2',
+                       'num_cn2_all', 'num_muts_present', 'perc_cn2',
+                       'num_cn2_all_check', 'perc_cn2_all_check',
+                       'num_total_present', 'gd_p_value', 'is_subcl_gd', 'is_subcl_gd_any_region')
+  mut_counts_all =  unique(input[, ..relevant_columns])
+  mut_counts_all[, cluster_id := as.character(cluster_id) ]
   if (all(is.na(mut_gds_events$clusters))) {
     clusters_supporting_wgd = c()
     } else {
   clusters_supporting_wgd = mut_gds_events[ is_subclonal_mutation_supported == TRUE, unlist(strsplit(clusters, split = ',')) ]
     }
-  mut_counts = mut_counts[ cluster_id %in% clusters_supporting_wgd ]
+  mut_counts = mut_counts_all[ cluster_id %in% clusters_supporting_wgd ]
+
+  # Diagnostic table: every tumour/sample/cluster combination for which the mutation-based
+  # test did NOT call a subclonal GD (is_subcl_gd == FALSE), together with the underlying
+  # counts and the thresholds used in this run. This is intended to help work out why a
+  # subclonal GD was not called for a given sample/cluster (e.g. too few mutations,
+  # perc_cn2/num_cn2 below threshold, high gd_p_value etc.)
+  mut_counts_not_called <- mut_counts_all[ is_subcl_gd == FALSE ]
+  mut_counts_not_called[, `:=`(discover_mut_cpn_2_threshold = discover_mut_cpn_2_threshold,
+                                check_mut_cpn_2_threshold = check_mut_cpn_2_threshold,
+                                discover_num_muts_threshold = discover_num_muts_threshold,
+                                discover_frac_2_cpn_muts_threshold = discover_frac_2_cpn_muts_threshold,
+                                discover_num_2_cpn_muts_threshold = discover_num_2_cpn_muts_threshold,
+                                check_frac_2_cpn_muts_threshold = check_frac_2_cpn_muts_threshold,
+                                check_num_2_cpn_muts_threshold = check_num_2_cpn_muts_threshold) ]
 
   # Summarise per tumour
   mut_gds_seperated[, First_GD := tstrsplit(gd_events, split = ',')[[1]]]
@@ -228,10 +284,11 @@ detect_par_gd <- function( input, mut_cpn_2_threshold = 1.5, discover_num_muts_t
   mut_gds_tumour[ is.na(num_subclonal_gds), num_subclonal_gds := 0 ]
   
   # output as list
-  output <- list(GDs_per_tumour = mut_gds_tumour, 
-                 GDs_per_region = mut_gds_seperated, 
+  output <- list(GDs_per_tumour = mut_gds_tumour,
+                 GDs_per_region = mut_gds_seperated,
                  GDs_events = mut_gds_events,
-                 mut_counts = mut_counts )
+                 mut_counts = mut_counts,
+                 mut_counts_not_called = mut_counts_not_called )
   
   return( output )
   
@@ -456,9 +513,9 @@ seperate_gd_events <- function( tumour_gd_clusters ){
 #############
 
 
-mut_cpn_2_threshold = 1.5; discover_num_muts_threshold = 10;
+discover_mut_cpn_2_threshold = 1.5; check_mut_cpn_2_threshold = 1.25; discover_num_muts_threshold = 10;
 discover_frac_2_cpn_muts_threshold = 0.25; check_frac_2_cpn_muts_threshold = 0.1;
-discover_num_2_cpn_muts_threshold = 5; check_num_2_cpn_muts_threshold = 3; 
+discover_num_2_cpn_muts_threshold = 5; check_num_2_cpn_muts_threshold = 3;
 testing = FALSE; track = FALSE
 
 

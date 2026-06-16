@@ -89,6 +89,8 @@ output <- detect_par_gd( input = example_data )
 fwrite(output[[1]], 'example/example_output/example_GDs_per_tumour.tsv', sep = '\t')
 fwrite(output[[2]], 'example/example_output/example_GDs_per_region.tsv', sep = '\t')
 fwrite(output[[3]], 'example/example_output/example_GD_events.tsv', sep = '\t')
+fwrite(output[[4]], 'example/example_output/example_mut_counts.tsv', sep = '\t')
+fwrite(output[[5]], 'example/example_output/example_mut_counts_not_called.tsv', sep = '\t')
 
 #######
 # END #
