@@ -230,6 +230,41 @@ detect_par_gd <- function( input, discover_mut_cpn_2_threshold = 1.5, check_mut_
                        'num_total_present', 'gd_p_value', 'is_subcl_gd', 'is_subcl_gd_any_region')
   mut_counts_all =  unique(input[, ..relevant_columns])
   mut_counts_all[, cluster_id := as.character(cluster_id) ]
+
+  # Add explicit threshold diagnostics per row so users can see:
+  # value tested, threshold used, and whether each threshold was cleared.
+  mut_counts_all[, `:=`(
+    discover_mut_cpn_2_threshold = discover_mut_cpn_2_threshold,
+    check_mut_cpn_2_threshold = check_mut_cpn_2_threshold,
+
+    discover_num_muts_value = num_muts,
+    discover_num_muts_threshold = discover_num_muts_threshold,
+    discover_num_muts_pass = num_muts > discover_num_muts_threshold,
+
+    discover_frac_2_cpn_muts_value = perc_cn2,
+    discover_frac_2_cpn_muts_threshold = discover_frac_2_cpn_muts_threshold,
+    discover_frac_2_cpn_muts_pass = perc_cn2 > discover_frac_2_cpn_muts_threshold,
+
+    discover_num_2_cpn_muts_value = num_cn2,
+    discover_num_2_cpn_muts_threshold = discover_num_2_cpn_muts_threshold,
+    discover_num_2_cpn_muts_pass = num_cn2 > discover_num_2_cpn_muts_threshold,
+
+    check_frac_2_cpn_muts_value = perc_cn2_all_check,
+    check_frac_2_cpn_muts_threshold = check_frac_2_cpn_muts_threshold,
+    check_frac_2_cpn_muts_pass = perc_cn2_all_check > check_frac_2_cpn_muts_threshold,
+
+    check_num_2_cpn_muts_value = num_cn2_all_check,
+    check_num_2_cpn_muts_threshold = check_num_2_cpn_muts_threshold,
+    check_num_2_cpn_muts_pass = num_cn2_all_check > check_num_2_cpn_muts_threshold
+  )]
+
+  mut_counts_all[, `:=`(
+    discover_pass_all = discover_num_muts_pass &
+      discover_frac_2_cpn_muts_pass &
+      discover_num_2_cpn_muts_pass,
+    check_pass_all = check_frac_2_cpn_muts_pass &
+      check_num_2_cpn_muts_pass
+  )]
   if (all(is.na(mut_gds_events$clusters))) {
     clusters_supporting_wgd = c()
     } else {
@@ -243,13 +278,6 @@ detect_par_gd <- function( input, discover_mut_cpn_2_threshold = 1.5, check_mut_
   # subclonal GD was not called for a given sample/cluster (e.g. too few mutations,
   # perc_cn2/num_cn2 below threshold, high gd_p_value etc.)
   mut_counts_not_called <- mut_counts_all[ is_subcl_gd == FALSE ]
-  mut_counts_not_called[, `:=`(discover_mut_cpn_2_threshold = discover_mut_cpn_2_threshold,
-                                check_mut_cpn_2_threshold = check_mut_cpn_2_threshold,
-                                discover_num_muts_threshold = discover_num_muts_threshold,
-                                discover_frac_2_cpn_muts_threshold = discover_frac_2_cpn_muts_threshold,
-                                discover_num_2_cpn_muts_threshold = discover_num_2_cpn_muts_threshold,
-                                check_frac_2_cpn_muts_threshold = check_frac_2_cpn_muts_threshold,
-                                check_num_2_cpn_muts_threshold = check_num_2_cpn_muts_threshold) ]
 
   # Summarise per tumour
   mut_gds_seperated[, First_GD := tstrsplit(gd_events, split = ',')[[1]]]
