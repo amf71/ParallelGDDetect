@@ -80,3 +80,48 @@ A list is returned with three objects which each describe the genome doubling ev
   * total_regions: Total number of regions in the tumour which the GD event is present
   * is_subclonal_mutation_supported: Whether there is a doubled subclonal mutation cluster supporting a subclonal GD (TRUE) or if this subclonal GD is inferred only from the ploidy (FALSE)
   * clusters: If there are supporting subclonal mutation clusters which are they (common seperated list, otherwise NA if none)
+
+## Bootstrap stability filtering
+
+By default, `detect_par_gd()` uses the discovery and check thresholds directly, without bootstrapping. Set `bootstrap_discovery = TRUE` to assess how consistently each discovery call is reproduced when mutations are resampled with replacement within each tumour, sample, and cluster. Only tumour/sample/cluster combinations that pass the discovery thresholds on the original data are evaluated for bootstrap stability.
+
+```R
+output <- detect_par_gd(
+  example_data,
+  bootstrap_discovery = TRUE,
+  n_boot = 500,
+  seed = 1
+)
+```
+
+Bootstrap filtering builds the standard result tables in two passes:
+
+1. **Stable anchors:** A tumour/sample/cluster must pass the discovery thresholds and the selected stability test to be called from its own evidence.
+2. **Check-threshold second chance:** If a cluster has at least one stable anchor anywhere in the tumour, other samples of that cluster can be called using the lower check thresholds, without needing to pass the stability test themselves. Anchors retain their validated calls and are not re-evaluated against the check thresholds. Without a stable anchor, no sample of the cluster can be called through this second pass.
+
+Thus, a stable call in one region can support calls in other regions of the same cluster, even when those regions do not independently pass discovery. Returned `GDs_per_tumour`, `GDs_per_region`, `GDs_events`, `mut_counts`, and `mut_counts_not_called` are built from this filtered call set.
+
+The bootstrap and stability arguments are:
+
+| Argument | Default | Description |
+| --- | --- | --- |
+| `bootstrap_discovery` | `FALSE` | Turn bootstrap stability filtering on or off. |
+| `n_boot` | `500` | Number of resamples per tumour/sample/cluster. |
+| `seed` | `1` | Random seed for reproducibility. |
+| `stability_threshold` | `0.7` | Minimum stability tested; stability is the fraction of resamples reproducing the discovery call. |
+| `stability_alpha` | `0.05` | Significance level for the stability rule. With the binomial test enabled, this is the adjusted q-value cutoff. |
+| `stability_use_binom_test` | `TRUE` | Use a one-sided binomial test against the null that true stability is at most `stability_threshold`, with p-values adjusted by the selected method. A call is stable when `q_value < stability_alpha`. If `FALSE`, use the Wilson interval rule: its lower bound must exceed `stability_threshold`. |
+| `stability_adjust_method` | `"BH"` | P-value adjustment method passed to `stats::p.adjust` when using the binomial test. |
+
+When bootstrapping is enabled, the returned list also includes:
+
+* `bootstrap_discovery`: One row per original-data discovery call, with `k` (resamples reproducing the call), `B` (resamples run), `stability` (`k / B`), Wilson interval bounds (`ci_low`, `ci_high`), and the binomial test fields (`p_value`, `q_value`) when applicable. `keep_call` records whether `ci_low > stability_threshold`; `is_stable` records the rule actually selected by `stability_use_binom_test`.
+* `bootstrap_discovery_settings`: The parameters and settings used for bootstrapping, including the resampling unit and the requirement for a stable cluster anchor before applying the check thresholds.
+* `unstable_calls_GDs_per_tumour`, `unstable_calls_GDs_per_region`, `unstable_calls_GDs_events`, `unstable_calls_mut_counts`, and `unstable_calls_mut_counts_not_called`: The calls from the unfiltered discovery-plus-check pipeline that were excluded from the filtered results. These include calls lost to stability filtering and check-phase calls that had no stable anchor. They can be used to inspect calls rejected by the filter.
+
+## Reproducing original publication
+
+In silico benchmarking presented in (Frankell et al., 2023)[https://doi.org/10.1038/s41586-023-05783-5] has been performed with the previous version of this programme. In order to reproduce it, please use 1af16a8355d594cc6cb91cfa3042c6292f5631ae commit has, i.e.'
+```bash 
+git checkout -b original-publication 1af16a8355d594cc6cb91cfa3042c6292f5631ae
+```
