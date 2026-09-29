@@ -8,7 +8,7 @@
 # input = example_data
 # input = eg_input_all
 # 
-# mut_cpn_2_threshold = 1.5; discover_num_muts_threshold = 20;
+# discover_mut_cpn_2_threshold = 1.5; check_mut_cpn_2_threshold = 1.25; discover_num_muts_threshold = 20;
 # discover_num_2_cpn_muts_threshold = 10; discover_frac_2_cpn_muts_threshold = 0.25;
 # check_num_muts_threshold = 10; check_num_2_cpn_muts_threshold = 5; 
 # check_frac_2_cpn_muts_threshold = 0.1
@@ -50,8 +50,13 @@
 #'       rather than gains the are known to occur after a GD event and are similar to those used in carter et al
 #'       2012 Nature biotechnology which first published the ABSOLUTE tool. 
 #' 
-#' @param mut_cpn_2_threshold The mutation copy number (mut_cpn) theshold to consider a mutation most likely at 2 copies. Deafult is 1.5. 
-#' 
+#' @param discover_mut_cpn_2_threshold The mutation copy number (mut_cpn) threshold to consider a mutation most likely at 2 copies,
+#' used when initially discovering whether a cluster shows evidence of a subclonal GD ('discover_' criteria). Default is 1.5.
+#'
+#' @param check_mut_cpn_2_threshold A lower mutation copy number (mut_cpn) threshold to consider a mutation most likely at 2 copies,
+#' used for the 'check_' criteria applied to a cluster in regions where it has already been identified as doubled in at least one
+#' other region. If not supplied, defaults to the value of discover_mut_cpn_2_threshold.
+#'
 #' @param discover_num_muts_threshold The number of mutations required to assess a clone for evidence of a subclonal GD events using 
 #' the mutation copy number (mut_cpn). Default is 20. 
 #' 
@@ -67,9 +72,31 @@
 #' Default is FALSE. 
 #' 
 #' @param track  An argument which will cause messages to be printed about what the function is doing and a progress bar if a very large amount of data is inputted
-#' and the user wishes to track progress. Default is FALSE. 
-#' 
-#' 
+#' and the user wishes to track progress. Default is FALSE.
+#'
+#' @param bootstrap_discovery Whether to assess the bootstrap stability of each 'discover_' threshold call by resampling
+#' mutations (with replacement) within each tumour/sample/cluster \code{n_boot} times, and to filter the returned calls on
+#' that stability (see @return below for what changes when this is TRUE). Default is FALSE.
+#'
+#' @param n_boot The number of bootstrap resamples to use when \code{bootstrap_discovery = TRUE}. Default is 500.
+#'
+#' @param seed The random seed set before bootstrapping, for reproducibility. Default is 1.
+#'
+#' @param stability_threshold The stability (fraction of bootstrap resamples reproducing a call) a tumour/sample/cluster
+#' must clear to be considered stable, used both for the Wilson confidence interval check and as the null value in the
+#' binomial significance test. Default is 0.7.
+#'
+#' @param stability_alpha The significance level used for the Wilson confidence interval on stability, and (when
+#' \code{stability_use_binom_test = TRUE}) the q-value cutoff below which a call is considered stable. Default is 0.05.
+#'
+#' @param stability_use_binom_test Whether stability filtering uses the Benjamini-Hochberg adjusted q-value from a one-sided binomial
+#' test (q_value < stability_alpha) rather than the Wilson lower confidence bound (ci_low > stability_threshold).
+#' Default is TRUE.
+#'
+#' @param stability_adjust_method The p-value adjustment method (passed to \code{stats::p.adjust}) used to compute
+#' q_value when \code{stability_use_binom_test = TRUE}. Default is "BH".
+#'
+#'
 #' @return A list is returned with three objects which each describe the genome
 #' doubling events over all the tumours that were inputted:
 #' * GDs_per_tumour: Description of genome doubling events for each tumour (one row per tumour)
@@ -104,26 +131,79 @@
 #'     * is_subclonal_mutation_supported: Whether there is a doubled subclonal mutation cluster supporting a subclonal
 #'       GD (TRUE) or if this subclonal GD is inferred only from the ploidy (FALSE)
 #'     * clusters: If there are supporting subclonal mutation clusters which are they (common seperated list, otherwise NA if none)
-#' 
-#' @author 
+#'
+#' * mut_counts: The mutation counts per tumour/sample/cluster for the clusters which
+#'   support a called subclonal GD event (one row per tumour/sample/cluster which is in the `clusters` field of an event
+#'   in GDs_events with `is_subclonal_mutation_supported == TRUE`)
+#'
+#' * mut_counts_not_called: The same mutation counts as mut_counts, but for every
+#'   tumour/sample/cluster combination where the mutation-based test did NOT call a subclonal GD (`is_subcl_gd == FALSE`).
+#'   This is intended for diagnosing why a subclonal GD was not called in a given sample/cluster (e.g. too few mutations,
+#'   perc_cn2/num_cn2 below threshold etc.) and includes the thresholds used for the run:
+#'     * is_subcl_gd: Whether this tumour/sample/cluster was called as showing evidence of a subclonal GD
+#'     * is_subcl_gd_any_region: Whether this cluster was called as showing evidence of a subclonal GD in any region/sample
+#'       of the tumour (in which case the lower 'check_' thresholds were applied instead of the 'discover_' thresholds)
+#'     * discover_mut_cpn_2_threshold, check_mut_cpn_2_threshold, discover_num_muts_threshold, discover_frac_2_cpn_muts_threshold,
+#'       discover_num_2_cpn_muts_threshold, check_frac_2_cpn_muts_threshold, check_num_2_cpn_muts_threshold: The threshold values
+#'       used for this run (see arguments above)
+#'
+#' When \code{bootstrap_discovery = TRUE}, calls are filtered through a two-pass procedure before any of the tables
+#' above are built, and the function returns extra elements:
+#' * GDs_per_tumour, GDs_per_region, GDs_events, mut_counts, mut_counts_not_called: as described above, but built from
+#'   a filtered call set:
+#'     1. Pass 1 ('anchors'): a tumour/sample/cluster must pass the 'discover_' thresholds AND be stable under
+#'        bootstrapping (see \code{stability_use_binom_test}) to be called on its own evidence.
+#'     2. Pass 2 ('check', second chance): once a cluster has at least one stable anchor somewhere in the tumour,
+#'        every other sample of that same cluster is given a second chance at the lower 'check_' thresholds, without
+#'        needing to pass the stability test itself. If nowhere in the tumour is the cluster a significant, stable
+#'        subclonal GD, no anchor exists and no other sample of that cluster gets checked. Anchors keep their own
+#'        already-validated call (it is not re-evaluated against the check thresholds).
+#'   A subclonal GD event can still be called from a single region's stable evidence even when other regions of the
+#'   same cluster fail discovery and have no other anchor to borrow from.
+#' * unstable_calls_GDs_per_tumour, unstable_calls_GDs_per_region, unstable_calls_GDs_events, unstable_calls_mut_counts,
+#'   unstable_calls_mut_counts_not_called: the same tables, but built from whatever the un-filtered discover+check
+#'   pipeline would have called, minus the filtered calls above - ie the calls (including any only reached via the
+#'   'check' phase with no stable anchor backing the cluster) that are dropped specifically because of stability
+#'   filtering - useful to check if you agree with rejected calls.
+#' * bootstrap_discovery: One row per tumour/sample/cluster which passed the 'discover_' thresholds on the original
+#'   (non-bootstrapped) data, with:
+#'     * k, B: number of bootstrap resamples (out of B) in which the call was reproduced
+#'     * stability, ci_low, ci_high: k/B and its Wilson confidence interval (level set by \code{stability_alpha})
+#'     * keep_call: whether ci_low > stability_threshold
+#'     * p_value, q_value: one-sided binomial test (H0: true stability <= stability_threshold) and its
+#'       \code{stability_adjust_method}-adjusted q-value (only when \code{stability_use_binom_test = TRUE})
+#'     * is_stable: the rule actually used to build the filtered tables above - \code{q_value < stability_alpha}
+#'       when \code{stability_use_binom_test = TRUE}, otherwise \code{keep_call}
+#' * bootstrap_discovery_settings: the bootstrap/stability parameters used for this run
+#'
+#' @author
 #' 
 #' Alexander M Frankell, Francis Crick institute, University College London, \email{alexander.frankell@@crick.ac.uk}
-#' 
+#' Bootstrapping added by Piotr Pawlik, https://github.com/wlippa
 #' @examples 
 #' # Run on example data (loaded with package)
 #' output <- detect_par_gd( example_data )
 #' 
 #' @export
-detect_par_gd <- function( input, mut_cpn_2_threshold = 1.5, discover_num_muts_threshold = 10,
+detect_par_gd <- function( input, discover_mut_cpn_2_threshold = 1.5, check_mut_cpn_2_threshold = NULL,
+                           discover_num_muts_threshold = 10,
                            discover_frac_2_cpn_muts_threshold = 0.25, check_frac_2_cpn_muts_threshold = 0.1,
-                           discover_num_2_cpn_muts_threshold = 5, check_num_2_cpn_muts_threshold = 3, 
-                           testing = FALSE, track = FALSE){
+                           discover_num_2_cpn_muts_threshold = 5, check_num_2_cpn_muts_threshold = 3,
+                           testing = FALSE, track = FALSE,
+                           bootstrap_discovery = FALSE, n_boot = 500, seed = 1,
+                           stability_threshold = 0.7, stability_alpha = 0.05,
+                           stability_use_binom_test = TRUE, stability_adjust_method = "BH"){
+
+  if (is.null(check_mut_cpn_2_threshold)) {
+    check_mut_cpn_2_threshold <- discover_mut_cpn_2_threshold
+  }
   
   # get the oriingal class (in case not a data table - revert back at the end) 
   orig_class <- class(input)
   
   # make sure its a data.table for processing
   input <- data.table::as.data.table( input )
+  input_raw <- data.table::copy(input)
   
   if( input[, all(num_gds == 0)] ){
     message( 'No GD samples inputted')
@@ -137,91 +217,167 @@ detect_par_gd <- function( input, mut_cpn_2_threshold = 1.5, discover_num_muts_t
   ## for each clone in each region estimate whether at least some of the mutations
   ## were might have been present before a GD event (at mutCPN 2)
   input[, `:=`(num_muts = sum(round(MajCN) == 2^num_gds),
-               perc_cn2 = sum(mut_cpn > mut_cpn_2_threshold & round(MajCN) == 2^num_gds) / sum(round(MajCN) == 2^num_gds),
-               num_cn2 = sum(mut_cpn > mut_cpn_2_threshold & round(MajCN) == 2^num_gds),
-               perc_cn2_all = sum(mut_cpn > mut_cpn_2_threshold) / .N,
-               num_cn2_all = sum(mut_cpn > mut_cpn_2_threshold) ),
+               perc_cn2 = sum(mut_cpn > discover_mut_cpn_2_threshold & round(MajCN) == 2^num_gds) / sum(round(MajCN) == 2^num_gds),
+               num_cn2 = sum(mut_cpn > discover_mut_cpn_2_threshold & round(MajCN) == 2^num_gds),
+               num_cn2_all = sum(mut_cpn > discover_mut_cpn_2_threshold),
+               perc_cn2_all_check = sum(mut_cpn > check_mut_cpn_2_threshold) / .N,
+               num_cn2_all_check = sum(mut_cpn > check_mut_cpn_2_threshold),
+               num_muts_present = sum(mut_cpn > 0 & round(MajCN) == 2^num_gds),
+               num_total_present = sum(mut_cpn > 0) ),
         by = .(tumour_id, cluster_id, sample_id) ]
-  input[, is_subcl_gd := num_muts > discover_num_muts_threshold & 
+  input[, is_subcl_gd_discovery := num_muts > discover_num_muts_threshold &
           perc_cn2 > discover_frac_2_cpn_muts_threshold &
           num_cn2 > discover_num_2_cpn_muts_threshold ]
-  
+  input[, is_subcl_gd := is_subcl_gd_discovery]
+
   # set lower threshold ('check_' preflex parameters) if cluster is already doubled in a different region
   # Also remove need for X number of mutations at least at MajCN^num_gds - this aviods calling subclonal GD
   # where in fact different clones have different numbers of mutations at MajCN == numgd^2 (some not enough power for detection)
   input[, is_subcl_gd_any_region := any(is_subcl_gd), by = .(tumour_id, cluster_id)]
-  input[ (is_subcl_gd_any_region), is_subcl_gd := perc_cn2_all > check_frac_2_cpn_muts_threshold &
-                                                  num_cn2_all > check_num_2_cpn_muts_threshold]
+  input[ (is_subcl_gd_any_region), is_subcl_gd := perc_cn2_all_check > check_frac_2_cpn_muts_threshold &
+                                                  num_cn2_all_check > check_num_2_cpn_muts_threshold]
   
-  # order by most numerous gd clusters (in most samples) - used later to resolve
-  input[, num_regions := sum(is_subcl_gd), by = .(tumour_id, cluster_id)]
-  
-  # overlay the doubled clusteres for each region
-  input[, gd_clusters := paste(unique(cluster_id[(is_subcl_gd & !is_clonal_cluster)]), collapse = ','), 
-        by = .(sample_id, tumour_id)]
-  
-  #### Now need to work out what is the simplest explanation of events to lead to these clusters
-  #### being genome doubled ####
-  # Reduce table to per region and cluster GDs / pliody GDs
-  input_subcl_clusters <- unique( input[, .(gd_clusters, num_gds), by = .(sample_id, tumour_id)] )
-  
-  if(track) message( 'Resolving with pliody and nesting structure for each tumour' )
-  
-  tumours <- input_subcl_clusters[, unique(tumour_id)]
-  if(track) pb <- utils::txtProgressBar( min = 0, max = length(tumours), style = 3, width =  30 ) 
-  mut_gds_both <- lapply( tumours, function(tumour){
-    
-    if(testing) print(tumour)
-    if(track) utils::setTxtProgressBar( pb, which( tumours == tumour ) ) 
-    seperate_gd_events( tumour_gd_clusters = input_subcl_clusters[ tumour_id == tumour ] )
+  # thresholds shared by every call to .pgdd_build_outputs below
+  threshold_args <- list(
+    discover_mut_cpn_2_threshold = discover_mut_cpn_2_threshold,
+    check_mut_cpn_2_threshold = check_mut_cpn_2_threshold,
+    discover_num_muts_threshold = discover_num_muts_threshold,
+    discover_frac_2_cpn_muts_threshold = discover_frac_2_cpn_muts_threshold,
+    check_frac_2_cpn_muts_threshold = check_frac_2_cpn_muts_threshold,
+    discover_num_2_cpn_muts_threshold = discover_num_2_cpn_muts_threshold,
+    check_num_2_cpn_muts_threshold = check_num_2_cpn_muts_threshold,
+    testing = testing, track = track
+  )
 
-  }  )
-  mut_gds_seperated <-  rbindlist( lapply(mut_gds_both, function(x) x[[1]]) )
-  mut_gds_events <- rbindlist( lapply(mut_gds_both, function(x) x[[2]]) )
-  mut_gds_events <- mut_gds_events[ order(GD_event_id) ]
-  
-  # Clean up the NAs
-  mut_gds_events[ is.na(clusters), clusters := NA ]
-  
-  # Summarise per tumour
-  mut_gds_seperated[, First_GD := tstrsplit(gd_events, split = ',')[[1]]]
-  if( mut_gds_seperated[, any( grepl(',', gd_events) )]){
-    mut_gds_seperated[, Second_GD := tstrsplit(gd_events, split = ',')[[2]]]
-  } else {
-    mut_gds_seperated[, Second_GD := as.character(NA) ]
+  # is_subcl_gd as computed above already includes the 'check' phase (lower thresholds applied
+  # to clusters doubled elsewhere in the tumour). This is the pipeline used as-is when no
+  # bootstrapping is requested, and is also the reference ('what would be called with no
+  # stability filtering') used below to work out which of those check-phase-rescued calls
+  # are 'unstable'.
+  full_is_subcl_gd <- input$is_subcl_gd
+
+  if (!isTRUE(bootstrap_discovery)) {
+
+    full_result <- do.call(.pgdd_build_outputs, c(list(input = input, is_subcl_gd_vec = full_is_subcl_gd), threshold_args))
+    return( full_result )
+
   }
-    
-  mut_gds_seperated[ is.na(First_GD), First_GD := 'No GD' ]
-  mut_gds_seperated[ is.na(Second_GD), Second_GD := 'No GD' ]
-  
-  mut_gds_tumour <- mut_gds_seperated[, .(First_GD = ifelse( any(!First_GD == 'No GD'), ifelse(length(unique(First_GD)) > 1, 'Subclonal', 'Clonal'), 'No GD'),
-                                          Second_GD = ifelse( any(!Second_GD == 'No GD'), ifelse(length(unique(Second_GD)) > 1, 'Subclonal', 'Clonal'), 'No GD'),
-                                          num_first_gd = length(unique(First_GD[ !First_GD == 'No GD' ])), 
-                                          num_second_gd = length(unique(Second_GD[ !Second_GD == 'No GD' ])), 
-                                          First_GD_homogen = all(First_GD == unique(First_GD)[1]),
-                                          Second_GD_homogen = all(Second_GD == unique(Second_GD)[1]),
-                                          GD_status_homogen = all(num_gds == unique(num_gds)[1]),
-                                          GD_statuses = paste(unique(num_gds)[ order(unique(num_gds)) ], collapse = ','),
-                                          frac_0_gd_regions = sum(num_gds == 0)/.N,
-                                          frac_1_gd_regions = sum(num_gds == 1)/.N,
-                                          frac_2_gd_regions = sum(num_gds == 2)/.N),
-                                      by = tumour_id ]
-  
-  # over the number of clonal and subclonal gds calculated from the per event table
-  mut_gds_events_tumour <- mut_gds_events[, .( num_clonal_gds = sum(is_clonal == TRUE),
-                                              num_subclonal_gds = sum(is_clonal == FALSE)),
-                                          by = tumour_id ]
-  mut_gds_tumour <- merge(mut_gds_tumour, mut_gds_events_tumour, by = 'tumour_id', all.x = TRUE)
-  mut_gds_tumour[ is.na(num_clonal_gds), num_clonal_gds := 0 ]
-  mut_gds_tumour[ is.na(num_subclonal_gds), num_subclonal_gds := 0 ]
-  
-  # output as list
-  output <- list(GDs_per_tumour = mut_gds_tumour, 
-                 GDs_per_region = mut_gds_seperated, 
-                 GDs_events = mut_gds_events)
-  
+
+  if (!is.numeric(n_boot) || length(n_boot) != 1 || is.na(n_boot) || n_boot < 1) {
+    stop("n_boot must be a positive integer.")
+  }
+  n_boot <- as.integer(n_boot)
+  set.seed(seed)
+
+  baseline_discovery <- unique(input[is_subcl_gd_discovery == TRUE,
+                                     .(tumour_id, sample_id, cluster_id, num_muts, perc_cn2, num_cn2)])
+  if (nrow(baseline_discovery) > 0) {
+    baseline_discovery[, `:=`(k = 0L, B = n_boot)]
+
+    for (b in seq_len(n_boot)) {
+      boot_input <- input_raw[, .SD[sample.int(.N, .N, replace = TRUE)],
+                              by = .(tumour_id, sample_id, cluster_id)]
+
+      boot_disc <- .pgdd_compute_discovery_calls(
+        dt = boot_input,
+        discover_mut_cpn_2_threshold = discover_mut_cpn_2_threshold,
+        discover_num_muts_threshold = discover_num_muts_threshold,
+        discover_frac_2_cpn_muts_threshold = discover_frac_2_cpn_muts_threshold,
+        discover_num_2_cpn_muts_threshold = discover_num_2_cpn_muts_threshold
+      )
+
+      baseline_discovery[boot_disc,
+                         on = .(tumour_id, sample_id, cluster_id),
+                         k := k + as.integer(i.is_subcl_gd_discovery)]
+    }
+
+    ci <- .pgdd_wilson_ci_vec(baseline_discovery$k, baseline_discovery$B, alpha = stability_alpha)
+    baseline_discovery[, `:=`(
+      stability = k / B,
+      ci_low = ci$low,
+      ci_high = ci$high
+    )]
+    baseline_discovery[, keep_call := ci_low > stability_threshold]
+
+    # 'is_stable' is the actual rule used to filter calls below: the q-value from the one-sided
+    # binomial test (H0: true stability <= stability_threshold) when stability_use_binom_test is
+    # TRUE, or the Wilson lower CI bound ('keep_call') otherwise.
+    if (isTRUE(stability_use_binom_test)) {
+      baseline_discovery[, p_value := stats::pbinom(k - 1L, size = B, prob = stability_threshold, lower.tail = FALSE)]
+      baseline_discovery[, q_value := stats::p.adjust(p_value, method = stability_adjust_method)]
+      baseline_discovery[, is_stable := q_value < stability_alpha]
+    } else {
+      baseline_discovery[, is_stable := keep_call]
+    }
+
+    bootstrap_discovery_summary <- baseline_discovery[]
+  } else {
+    bootstrap_discovery_summary <- data.table::data.table(
+      tumour_id = character(), sample_id = character(), cluster_id = character(),
+      num_muts = numeric(), perc_cn2 = numeric(), num_cn2 = numeric(),
+      k = integer(), B = integer(), stability = numeric(),
+      ci_low = numeric(), ci_high = numeric(), keep_call = logical(), is_stable = logical()
+    )
+  }
+
+  # Pass 1 ('anchors'): a cluster/sample must pass the 'discover_' thresholds AND be stable under
+  # bootstrapping to be trusted on its own evidence.
+  input[, is_stable := FALSE]
+  if (nrow(bootstrap_discovery_summary) > 0) {
+    input[bootstrap_discovery_summary, is_stable := i.is_stable,
+          on = .(tumour_id, sample_id, cluster_id)]
+  }
+  input[, anchor_is_subcl_gd := is_subcl_gd_discovery & is_stable]
+
+  # Pass 2 ('check', second chance): once a cluster has at least one stable anchor somewhere in
+  # the tumour, every OTHER sample of that same cluster gets a second chance at the lower
+  # 'check_' thresholds, without needing to pass the stability test itself - if nowhere in the
+  # tumour is the cluster a significant, stable subclonal GD, there is no anchor to justify
+  # looking again with lower thresholds. Anchors keep their own already-validated call.
+  input[, cluster_has_anchor := any(anchor_is_subcl_gd), by = .(tumour_id, cluster_id)]
+  stable_is_subcl_gd <- input[, fifelse(
+    anchor_is_subcl_gd, TRUE,
+    fifelse(cluster_has_anchor,
+            perc_cn2_all_check > check_frac_2_cpn_muts_threshold & num_cn2_all_check > check_num_2_cpn_muts_threshold,
+            FALSE) )]
+  input[, c('is_stable', 'anchor_is_subcl_gd', 'cluster_has_anchor') := NULL]
+
+  # Unstable calls: whatever the full discover+check pipeline would have called, minus the
+  # filtered calls above (anchors plus their check-phase-rescued cluster-mates) - ie the calls
+  # (including any only reached via the 'check' phase with no stable anchor backing the cluster)
+  # that are lost specifically because of stability filtering.
+  unstable_is_subcl_gd <- full_is_subcl_gd & !stable_is_subcl_gd
+
+  stable_result <- do.call(.pgdd_build_outputs, c(list(input = input, is_subcl_gd_vec = stable_is_subcl_gd), threshold_args))
+  unstable_result <- do.call(.pgdd_build_outputs, c(list(input = input, is_subcl_gd_vec = unstable_is_subcl_gd), threshold_args))
+
+  # output as list: the default fields carry only stability-filtered ('stable') calls;
+  # the calls dropped by stability filtering are kept alongside under unstable_calls_*
+  output <- list(GDs_per_tumour = stable_result$GDs_per_tumour,
+                 GDs_per_region = stable_result$GDs_per_region,
+                 GDs_events = stable_result$GDs_events,
+                 mut_counts = stable_result$mut_counts,
+                 mut_counts_not_called = stable_result$mut_counts_not_called,
+                 unstable_calls_GDs_per_tumour = unstable_result$GDs_per_tumour,
+                 unstable_calls_GDs_per_region = unstable_result$GDs_per_region,
+                 unstable_calls_GDs_events = unstable_result$GDs_events,
+                 unstable_calls_mut_counts = unstable_result$mut_counts,
+                 unstable_calls_mut_counts_not_called = unstable_result$mut_counts_not_called,
+                 bootstrap_discovery = bootstrap_discovery_summary,
+                 bootstrap_discovery_settings = data.table::data.table(
+                   n_boot = n_boot,
+                   seed = seed,
+                   stability_threshold = stability_threshold,
+                   stability_alpha = stability_alpha,
+                   stability_use_binom_test = stability_use_binom_test,
+                   stability_adjust_method = stability_adjust_method,
+                   bootstrap_unit = "tumour_id x sample_id x cluster_id",
+                   phase = "discovery_only",
+                   check_phase_requires_stable_anchor_in_cluster = TRUE
+                 ) )
+
   return( output )
-  
+
 }
 
 
@@ -432,30 +588,191 @@ seperate_gd_events <- function( tumour_gd_clusters ){
   gd_events[, GD_event_id := paste(gsub('^.{1}_', '', tumour_id), GD_event, sep = '_')]
   
   # return the two different data formats - per region and per GD event
-  return( list(tumour_gd_clusters, gd_events[, .(GD_event, GD_event_id, tumour_id, is_clonal, num_regions_gd_event, 
+  return( list(tumour_gd_clusters, gd_events[, .(GD_event, GD_event_id, tumour_id, is_clonal, num_regions_gd_event,
                                                  total_regions, is_subclonal_mutation_supported, clusters, samples)] ) )
-  
+
 }
 
+# Takes the per-mutation `input` table (with is_subcl_gd_discovery, is_subcl_gd_any_region and the
+# per-cluster diagnostic columns already computed) plus a chosen `is_subcl_gd_vec` (one boolean per
+# row of `input`, aligned by row order) and runs the event-resolution / per-tumour and per-region
+# summary logic against that specific calling of is_subcl_gd. Used to build the standard output
+# tables once for the default (discover+check) pipeline, or twice - once for stability-filtered
+# ('stable') calls and once for the calls lost to that filtering ('unstable') - when bootstrapping
+# is requested.
+.pgdd_build_outputs <- function(input, is_subcl_gd_vec,
+                                discover_mut_cpn_2_threshold, check_mut_cpn_2_threshold,
+                                discover_num_muts_threshold, discover_frac_2_cpn_muts_threshold,
+                                check_frac_2_cpn_muts_threshold,
+                                discover_num_2_cpn_muts_threshold, check_num_2_cpn_muts_threshold,
+                                testing = FALSE, track = FALSE){
+
+  input <- data.table::copy(input)
+  input[, is_subcl_gd := is_subcl_gd_vec]
+
+  # order by most numerous gd clusters (in most samples) - used later to resolve
+  input[, num_regions := sum(is_subcl_gd), by = .(tumour_id, cluster_id)]
+
+  # overlay the doubled clusteres for each region
+  input[, gd_clusters := paste(unique(cluster_id[(is_subcl_gd & !is_clonal_cluster)]), collapse = ','),
+        by = .(sample_id, tumour_id)]
+
+  #### Now need to work out what is the simplest explanation of events to lead to these clusters
+  #### being genome doubled ####
+  # Reduce table to per region and cluster GDs / pliody GDs
+  input_subcl_clusters <- unique( input[, .(gd_clusters, num_gds), by = .(sample_id, tumour_id)] )
+
+  if(track) message( 'Resolving with pliody and nesting structure for each tumour' )
+
+  tumours <- input_subcl_clusters[, unique(tumour_id)]
+  if(track) pb <- utils::txtProgressBar( min = 0, max = length(tumours), style = 3, width =  30 )
+  mut_gds_both <- lapply( tumours, function(tumour){
+
+    if(testing) print(tumour)
+    if(track) utils::setTxtProgressBar( pb, which( tumours == tumour ) )
+    seperate_gd_events( tumour_gd_clusters = input_subcl_clusters[ tumour_id == tumour ] )
+
+  }  )
+  mut_gds_seperated <-  rbindlist( lapply(mut_gds_both, function(x) x[[1]]) )
+  mut_gds_events <- rbindlist( lapply(mut_gds_both, function(x) x[[2]]) )
+  mut_gds_events <- mut_gds_events[ order(GD_event_id) ]
+
+  # Clean up the NAs
+  mut_gds_events[ is.na(clusters), clusters := NA ]
+
+  # add mutation count:
+  # include all mutation count inputs used for threshold-based subclonal GD calling.
+  relevant_columns = c('tumour_id', 'sample_id', 'cluster_id', 'num_muts', 'num_cn2',
+                       'num_cn2_all', 'num_muts_present', 'perc_cn2',
+                       'num_cn2_all_check', 'perc_cn2_all_check',
+                       'num_total_present', 'is_subcl_gd_discovery', 'is_subcl_gd', 'is_subcl_gd_any_region')
+  mut_counts_all =  unique(input[, ..relevant_columns])
+  mut_counts_all[, cluster_id := as.character(cluster_id) ]
+
+  # Add explicit threshold diagnostics per row so users can see:
+  # value tested, threshold used, and whether each threshold was cleared.
+  mut_counts_all[, `:=`(
+    discover_mut_cpn_2_threshold = discover_mut_cpn_2_threshold,
+    check_mut_cpn_2_threshold = check_mut_cpn_2_threshold,
+
+    discover_num_muts_value = num_muts,
+    discover_num_muts_threshold = discover_num_muts_threshold,
+    discover_num_muts_pass = num_muts > discover_num_muts_threshold,
+
+    discover_frac_2_cpn_muts_value = perc_cn2,
+    discover_frac_2_cpn_muts_threshold = discover_frac_2_cpn_muts_threshold,
+    discover_frac_2_cpn_muts_pass = perc_cn2 > discover_frac_2_cpn_muts_threshold,
+
+    discover_num_2_cpn_muts_value = num_cn2,
+    discover_num_2_cpn_muts_threshold = discover_num_2_cpn_muts_threshold,
+    discover_num_2_cpn_muts_pass = num_cn2 > discover_num_2_cpn_muts_threshold,
+
+    check_frac_2_cpn_muts_value = perc_cn2_all_check,
+    check_frac_2_cpn_muts_threshold = check_frac_2_cpn_muts_threshold,
+    check_frac_2_cpn_muts_pass = perc_cn2_all_check > check_frac_2_cpn_muts_threshold,
+
+    check_num_2_cpn_muts_value = num_cn2_all_check,
+    check_num_2_cpn_muts_threshold = check_num_2_cpn_muts_threshold,
+    check_num_2_cpn_muts_pass = num_cn2_all_check > check_num_2_cpn_muts_threshold
+  )]
+
+  mut_counts_all[, `:=`(
+    discover_pass_all = discover_num_muts_pass &
+      discover_frac_2_cpn_muts_pass &
+      discover_num_2_cpn_muts_pass,
+    check_pass_all = check_frac_2_cpn_muts_pass &
+      check_num_2_cpn_muts_pass
+  )]
+  if (all(is.na(mut_gds_events$clusters))) {
+    clusters_supporting_wgd = c()
+    } else {
+  clusters_supporting_wgd = mut_gds_events[ is_subclonal_mutation_supported == TRUE, unlist(strsplit(clusters, split = ',')) ]
+    }
+  mut_counts = mut_counts_all[ cluster_id %in% clusters_supporting_wgd ]
+
+  # Diagnostic table: every tumour/sample/cluster combination for which the mutation-based
+  # test did NOT call a subclonal GD (is_subcl_gd == FALSE), together with the underlying
+  # counts and the thresholds used in this run. This is intended to help work out why a
+  # subclonal GD was not called for a given sample/cluster (e.g. too few mutations,
+  # perc_cn2/num_cn2 below threshold etc.)
+  mut_counts_not_called <- mut_counts_all[ is_subcl_gd == FALSE ]
+
+  # Summarise per tumour
+  mut_gds_seperated[, First_GD := tstrsplit(gd_events, split = ',')[[1]]]
+  if( mut_gds_seperated[, any( grepl(',', gd_events) )]){
+    mut_gds_seperated[, Second_GD := tstrsplit(gd_events, split = ',')[[2]]]
+  } else {
+    mut_gds_seperated[, Second_GD := as.character(NA) ]
+  }
+
+  mut_gds_seperated[ is.na(First_GD), First_GD := 'No GD' ]
+  mut_gds_seperated[ is.na(Second_GD), Second_GD := 'No GD' ]
+
+  mut_gds_tumour <- mut_gds_seperated[, .(First_GD = ifelse( any(!First_GD == 'No GD'), ifelse(length(unique(First_GD)) > 1, 'Subclonal', 'Clonal'), 'No GD'),
+                                          Second_GD = ifelse( any(!Second_GD == 'No GD'), ifelse(length(unique(Second_GD)) > 1, 'Subclonal', 'Clonal'), 'No GD'),
+                                          num_first_gd = length(unique(First_GD[ !First_GD == 'No GD' ])),
+                                          num_second_gd = length(unique(Second_GD[ !Second_GD == 'No GD' ])),
+                                          First_GD_homogen = all(First_GD == unique(First_GD)[1]),
+                                          Second_GD_homogen = all(Second_GD == unique(Second_GD)[1]),
+                                          GD_status_homogen = all(num_gds == unique(num_gds)[1]),
+                                          GD_statuses = paste(unique(num_gds)[ order(unique(num_gds)) ], collapse = ','),
+                                          frac_0_gd_regions = sum(num_gds == 0)/.N,
+                                          frac_1_gd_regions = sum(num_gds == 1)/.N,
+                                          frac_2_gd_regions = sum(num_gds == 2)/.N),
+                                      by = tumour_id ]
+
+  # over the number of clonal and subclonal gds calculated from the per event table
+  mut_gds_events_tumour <- mut_gds_events[, .( num_clonal_gds = sum(is_clonal == TRUE),
+                                              num_subclonal_gds = sum(is_clonal == FALSE)),
+                                          by = tumour_id ]
+  mut_gds_tumour <- merge(mut_gds_tumour, mut_gds_events_tumour, by = 'tumour_id', all.x = TRUE)
+  mut_gds_tumour[ is.na(num_clonal_gds), num_clonal_gds := 0 ]
+  mut_gds_tumour[ is.na(num_subclonal_gds), num_subclonal_gds := 0 ]
+
+  list(GDs_per_tumour = mut_gds_tumour,
+      GDs_per_region = mut_gds_seperated,
+      GDs_events = mut_gds_events,
+      mut_counts = mut_counts,
+      mut_counts_not_called = mut_counts_not_called)
+}
+
+.pgdd_compute_discovery_calls <- function(dt,
+                                          discover_mut_cpn_2_threshold,
+                                          discover_num_muts_threshold,
+                                          discover_frac_2_cpn_muts_threshold,
+                                          discover_num_2_cpn_muts_threshold) {
+  dt <- data.table::as.data.table(dt)
+
+  out <- dt[, .(
+    num_muts = sum(round(MajCN) == 2^num_gds),
+    perc_cn2 = {
+      denom <- sum(round(MajCN) == 2^num_gds)
+      if (denom == 0) 0 else sum(mut_cpn > discover_mut_cpn_2_threshold & round(MajCN) == 2^num_gds) / denom
+    },
+    num_cn2 = sum(mut_cpn > discover_mut_cpn_2_threshold & round(MajCN) == 2^num_gds)
+  ), by = .(tumour_id, cluster_id, sample_id)]
+
+  out[, is_subcl_gd_discovery := num_muts > discover_num_muts_threshold &
+        perc_cn2 > discover_frac_2_cpn_muts_threshold &
+        num_cn2 > discover_num_2_cpn_muts_threshold]
+  out
+}
+
+.pgdd_wilson_ci_vec <- function(k, n, alpha = 0.05) {
+  z <- stats::qnorm(1 - alpha / 2)
+  phat <- k / n
+  denom <- 1 + (z^2 / n)
+  centre <- (phat + (z^2 / (2 * n))) / denom
+  half <- (z / denom) * sqrt((phat * (1 - phat) / n) + (z^2 / (4 * n^2)))
+  list(low = pmax(0, centre - half), high = pmin(1, centre + half))
+}
 
 #############
 ###  END  ###
 #############
 
 
-mut_cpn_2_threshold = 1.5; discover_num_muts_threshold = 10;
+discover_mut_cpn_2_threshold = 1.5; check_mut_cpn_2_threshold = 1.25; discover_num_muts_threshold = 10;
 discover_frac_2_cpn_muts_threshold = 0.25; check_frac_2_cpn_muts_threshold = 0.1;
-discover_num_2_cpn_muts_threshold = 5; check_num_2_cpn_muts_threshold = 3; 
+discover_num_2_cpn_muts_threshold = 5; check_num_2_cpn_muts_threshold = 3;
 testing = FALSE; track = FALSE
-
-
-
-
-
-
-
-
-
-
-
-
