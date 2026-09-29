@@ -203,8 +203,17 @@ detect_par_gd <- function( input, discover_mut_cpn_2_threshold = 1.5, check_mut_
   
   # make sure its a data.table for processing
   input <- data.table::as.data.table( input )
+
+  # Remove rows with missing values in mut_cpn, num_gds, or MajCN:
+  na_rows <- input[, is.na(mut_cpn) | is.na(num_gds) | is.na(MajCN)]
+  if( any(na_rows) ){
+    na_samples <- input[ na_rows, unique(sample_id) ]
+    warning( sprintf('Removed %d mutations with missing mut_cpn, num_gds or MajCN (samples: %s)',
+                     sum(na_rows), paste(na_samples, collapse = ', ')), call. = FALSE )
+    input <- input[ !na_rows ]
+  }
+
   input_raw <- data.table::copy(input)
-  
   if( input[, all(num_gds == 0)] ){
     message( 'No GD samples inputted')
     return(NULL)
