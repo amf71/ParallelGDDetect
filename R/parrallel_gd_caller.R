@@ -409,7 +409,11 @@ seperate_gd_events <- function( tumour_gd_clusters ){
   if( !is.null(clusters) ){
     
     # Do a group clusters based on which are GD'd in the same region (theoretically should represent each event)
-    cluster_matrix <- as.data.table( do.call(rbind, lapply(clusters, function(cluster) grepl(cluster, tumour_gd_clusters$gd_clusters)) ))
+    # Match whole cluster IDs (not substrings, e.g. '5' must not match '15')
+    region_clusters <- strsplit(tumour_gd_clusters$gd_clusters, ',', fixed = TRUE)
+    cluster_matrix <- as.data.table( do.call(rbind, lapply(clusters, function(cluster)
+      vapply(region_clusters, function(x) cluster %in% x, logical(1))
+    )))
     cluster_matrix[, num_regions := apply(cluster_matrix, 1, function(x) sum(as.numeric(x))) ]
     colnames( cluster_matrix )[ 1:(ncol(cluster_matrix)-1) ] <-  tumour_gd_clusters$sample_id
     cluster_matrix[, regions_present := apply(cluster_matrix[, 1:(ncol(cluster_matrix)-1)], 1, function(row) paste(row, collapse = ','))]
